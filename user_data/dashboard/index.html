@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Smart Bot Dashboard</title>
+<style>
+  :root {
+    --bg: #0b0f1a;
+    --panel: #141b2d;
+    --panel-2: #1b2438;
+    --border: #26304a;
+    --text: #e6ebf5;
+    --muted: #8a97b1;
+    --green: #29d386;
+    --red: #ff5c7a;
+    --accent: #4f8cff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg); color: var(--text);
+  }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 24px; border-bottom: 1px solid var(--border); background: var(--panel);
+  }
+  header h1 { font-size: 18px; margin: 0; letter-spacing: 0.3px; }
+  .badge { font-size: 12px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
+  .badge.live { color: var(--red); border-color: var(--red); }
+  .badge.dry { color: var(--green); border-color: var(--green); }
+  .badge.state { margin-left: 8px; }
+  main { max-width: 1100px; margin: 0 auto; padding: 24px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 18px;
+  }
+  .card .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .card .value { font-size: 26px; font-weight: 600; margin-top: 6px; }
+  .value.pos { color: var(--green); } .value.neg { color: var(--red); }
+  section { margin-top: 28px; }
+  section h2 { font-size: 14px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+  table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+  th, td { text-align: left; padding: 10px 14px; font-size: 14px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; }
+  tr:last-child td { border-bottom: none; }
+  .login {
+    max-width: 380px; margin: 80px auto; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 14px; padding: 28px;
+  }
+  .login h2 { margin-top: 0; }
+  .login label { display: block; font-size: 13px; color: var(--muted); margin: 14px 0 4px; }
+  .login input {
+    width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--bg); color: var(--text); font-size: 14px;
+  }
+  button {
+    cursor: pointer; border: none; border-radius: 8px; background: var(--accent); color: white;
+    font-size: 14px; font-weight: 600; padding: 10px 16px;
+  }
+  button.ghost { background: transparent; border: 1px solid var(--border); color: var(--muted); }
+  .login button { width: 100%; margin-top: 20px; }
+  .error { color: var(--red); font-size: 13px; margin-top: 12px; min-height: 16px; }
+  .row { display: flex; gap: 10px; align-items: center; }
+  .muted { color: var(--muted); font-size: 12px; }
+  .hidden { display: none; }
+  footer { text-align: center; color: var(--muted); font-size: 12px; padding: 24px; }
+</style>
+</head>
+<body>
+
+<div id="loginView" class="login">
+  <h2>Smart Bot Dashboard</h2>
+  <p class="muted">Connect to your Freqtrade REST API (from your bot's <code>config.json</code> &rarr; <code>api_server</code>).</p>
+  <label>API URL</label>
+  <input id="apiUrl" value="http://127.0.0.1:8080" />
+  <label>Username</label>
+  <input id="username" value="freqtrader" />
+  <label>Password</label>
+  <input id="password" type="password" placeholder="your api_server password" />
+  <button id="loginBtn">Connect</button>
+  <div id="loginError" class="error"></div>
+</div>
+
+<div id="appView" class="hidden">
+  <header>
+    <div class="row">
+      <h1>Smart Bot Dashboard</h1>
+      <span id="dryBadge" class="badge">&mdash;</span>
+      <span id="stateBadge" class="badge state">&mdash;</span>
+    </div>
+    <div class="row">
+      <span id="botName" class="muted"></span>
+      <button id="refreshBtn" class="ghost">Refresh</button>
+      <button id="logoutBtn" class="ghost">Log out</button>
+    </div>
+  </header>
+  <main>
+    <div class="cards">
+      <div class="card"><div class="label">Exchange</div><div id="exchange" class="value">&mdash;</div></div>
+      <div class="card"><div class="label">Wallet balance</div><div id="balance" class="value">&mdash;</div></div>
+      <div class="card"><div class="label">Total profit</div><div id="profit" class="value">&mdash;</div></div>
+      <div class="card"><div class="label">Profit factor</div><div id="profitFactor" class="value">&mdash;</div></div>
+      <div class="card"><div class="label">Win / Loss</div><div id="winLoss" class="value">&mdash;</div></div>
+      <div class="card"><div class="label">Open trades</div><div id="openTrades" class="value">&mdash;</div></div>
+    </div>
+
+    <section>
+      <h2>Open trades</h2>
+      <table>
+        <thead><tr><th>Pair</th><th>Amount</th><th>Open rate</th><th>Current rate</th><th>Profit</th><th>Open since</th></tr></thead>
+        <tbody id="tradesBody"><tr><td colspan="6" class="muted">No open trades.</td></tr></tbody>
+      </table>
+    </section>
+
+    <footer>Auto-refreshes every 5s &middot; read-only view &middot; educational use only</footer>
+  </main>
+</div>
+
+<script>
+const state = { apiUrl: "", token: "", timer: null };
+
+function fmtMoney(n, cur = "") {
+  if (n === null || n === undefined || isNaN(n)) return "—";
+  return Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 }) + (cur ? " " + cur : "");
+}
+function signedClass(n) { return n > 0 ? "pos" : (n < 0 ? "neg" : ""); }
+
+async function api(path) {
+  const res = await fetch(state.apiUrl + "/api/v1" + path, {
+    headers: { "Authorization": "Bearer " + state.token }
+  });
+  if (res.status === 401) { logout("Session expired, please reconnect."); throw new Error("unauthorized"); }
+  if (!res.ok) throw new Error("HTTP " + res.status + " on " + path);
+  return res.json();
+}
+
+async function login() {
+  const err = document.getElementById("loginError");
+  err.textContent = "";
+  state.apiUrl = document.getElementById("apiUrl").value.replace(/\/+$/, "");
+  const user = document.getElementById("username").value;
+  const pass = document.getElementById("password").value;
+  try {
+    const res = await fetch(state.apiUrl + "/api/v1/token/login", {
+      method: "POST",
+      headers: { "Authorization": "Basic " + btoa(user + ":" + pass) }
+    });
+    if (!res.ok) throw new Error(res.status === 401 ? "Bad username or password." : "HTTP " + res.status);
+    const data = await res.json();
+    state.token = data.access_token;
+    sessionStorage.setItem("ft_url", state.apiUrl);
+    sessionStorage.setItem("ft_token", state.token);
+    showApp();
+  } catch (e) {
+    err.textContent = e.message.includes("Failed to fetch")
+      ? "Could not reach the API. Is the bot running, and is this origin in the config's CORS_origins?"
+      : e.message;
+  }
+}
+
+function logout(msg) {
+  clearInterval(state.timer);
+  state.token = "";
+  sessionStorage.removeItem("ft_token");
+  document.getElementById("appView").classList.add("hidden");
+  document.getElementById("loginView").classList.remove("hidden");
+  if (msg) document.getElementById("loginError").textContent = msg;
+}
+
+function showApp() {
+  document.getElementById("loginView").classList.add("hidden");
+  document.getElementById("appView").classList.remove("hidden");
+  refresh();
+  state.timer = setInterval(refresh, 5000);
+}
+
+async function refresh() {
+  try {
+    const [cfg, profit, balance, count, status] = await Promise.all([
+      api("/show_config"), api("/profit"), api("/balance"), api("/count"), api("/status")
+    ]);
+
+    const dry = cfg.dry_run;
+    const dryBadge = document.getElementById("dryBadge");
+    dryBadge.textContent = dry ? "DRY-RUN" : "LIVE";
+    dryBadge.className = "badge " + (dry ? "dry" : "live");
+
+    const stateBadge = document.getElementById("stateBadge");
+    stateBadge.textContent = (cfg.state || "").toUpperCase() || "—";
+
+    document.getElementById("botName").textContent = cfg.bot_name || "";
+    document.getElementById("exchange").textContent = cfg.exchange || "—";
+
+    const stake = cfg.stake_currency || "";
+    document.getElementById("balance").textContent = fmtMoney(balance.total, stake);
+
+    const pAbs = profit.profit_closed_coin ?? profit.profit_all_coin;
+    const pPct = profit.profit_closed_percent ?? profit.profit_all_percent;
+    const pEl = document.getElementById("profit");
+    pEl.textContent = fmtMoney(pAbs, stake) + (pPct !== undefined ? "  (" + Number(pPct).toFixed(2) + "%)" : "");
+    pEl.className = "value " + signedClass(pAbs);
+
+    document.getElementById("profitFactor").textContent =
+      profit.profit_factor !== undefined && profit.profit_factor !== null ? Number(profit.profit_factor).toFixed(2) : "—";
+    document.getElementById("winLoss").textContent =
+      (profit.winning_trades ?? 0) + " / " + (profit.losing_trades ?? 0);
+    document.getElementById("openTrades").textContent = count.current + " / " + count.max;
+
+    const body = document.getElementById("tradesBody");
+    if (!status.length) {
+      body.innerHTML = '<tr><td colspan="6" class="muted">No open trades.</td></tr>';
+    } else {
+      body.innerHTML = status.map(t => {
+        const prof = t.profit_pct ?? (t.profit_ratio * 100);
+        const cls = signedClass(prof);
+        return `<tr>
+          <td>${t.pair}</td>
+          <td>${fmtMoney(t.amount)}</td>
+          <td>${fmtMoney(t.open_rate)}</td>
+          <td>${fmtMoney(t.current_rate)}</td>
+          <td class="${cls}">${prof === undefined ? "—" : Number(prof).toFixed(2) + "%"}</td>
+          <td class="muted">${(t.open_date || "").replace("T", " ").slice(0, 16)}</td>
+        </tr>`;
+      }).join("");
+    }
+  } catch (e) {
+    if (e.message !== "unauthorized") console.error(e);
+  }
+}
+
+document.getElementById("loginBtn").addEventListener("click", login);
+document.getElementById("password").addEventListener("keydown", e => { if (e.key === "Enter") login(); });
+document.getElementById("refreshBtn").addEventListener("click", refresh);
+document.getElementById("logoutBtn").addEventListener("click", () => logout());
+
+// Resume a session if a token is cached.
+const savedToken = sessionStorage.getItem("ft_token");
+const savedUrl = sessionStorage.getItem("ft_url");
+if (savedToken && savedUrl) { state.token = savedToken; state.apiUrl = savedUrl; showApp(); }
+</script>
+</body>
+</html>
