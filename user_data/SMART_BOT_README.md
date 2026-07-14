@@ -1,99 +1,144 @@
-# SmartTrendMomentum — your automated crypto bot
+# Smart Crypto Bot — Kraken + Machine Learning + custom dashboard
 
-This folder contains a ready-to-run Freqtrade setup: a tunable trend + momentum
-strategy, a **safe dry-run** configuration, and everything you need to backtest,
-optimize, and watch it trade on a dashboard — **with no real money at risk** until
-*you* deliberately choose to go live.
+A complete, tested Freqtrade setup built on top of this repo. Everything lives in
+`user_data/` (the engine is untouched). It includes:
 
-> Disclaimer: This is educational, not financial advice. Most trading bots lose
-> money, especially un-tuned ones. Prove everything in backtest + dry-run first,
-> and never risk funds you can't afford to lose.
+- **Two strategies** — a classic indicator strategy and a machine-learning (FreqAI) one.
+- **A Kraken dry-run config** (US-friendly, USD pairs) — your live/paper target.
+- **A custom web dashboard** that talks to the bot's REST API.
 
-## What's here
+> Disclaimer: Educational, not financial advice. Most bots lose money, especially
+> un-tuned ones. Prove everything in backtest + dry-run first. Never risk funds you
+> can't afford to lose. Nothing here trades real money until *you* deliberately set
+> `dry_run: false` with your own API keys.
 
-- `strategies/SmartTrendMomentum.py` — the strategy (long-only spot). It only buys
-  in an established uptrend (EMA stack + price above the long EMA), times entries with
-  RSI momentum + MACD confirmation + a volume filter, and exits via ROI, a trailing
-  stop, an RSI/trend-break exit signal, and a profit-tightening custom stoploss.
-  Every threshold is a **Hyperopt parameter** so it can be auto-tuned.
-- `config.json` — dry-run config (exchange OKX, `dry_run: true`, 1000 USDT paper
-  wallet, majors whitelist, dashboard/API server enabled on `127.0.0.1:8080`).
+---
+
+## Files
+
+| Path | What it is |
+|------|------------|
+| `strategies/SmartTrendMomentum.py` | Classic trend + momentum strategy (EMA/RSI/MACD/volume), hyperopt-tuned. |
+| `strategies/FreqaiSmartStrategy.py` | **Machine-learning** strategy: engineers features, trains a model to predict future returns, retrains on a rolling window. Hybrid entry (ML prediction must agree with the trend). |
+| `config_kraken.json` | **Kraken** dry-run config, USD stake + USD pairs, dashboard enabled. Use this for live/dry-run. |
+| `config_freqai.json` | FreqAI config for **backtesting** the ML strategy (exchange OKX, see note on data below). |
+| `config.json` | Original OKX dry-run config (kept for backtesting the classic strategy). |
+| `dashboard/index.html` | Self-contained custom dashboard (no build step). |
+
+### Why two exchanges?
+You're on **Kraken** (correct choice for a US user). But Kraken's API does **not**
+serve historical candles for fast backtesting, and Binance is geo-blocked in the US.
+So we **backtest on OKX data** (a good public-data proxy) and **run live/dry-run on
+Kraken**. Signals/behavior transfer well; only fees differ slightly.
+
+---
 
 ## One-time setup
 
-The TA-Lib C library and Python deps must be installed. From the repo root:
+From the repo root:
 
 ```bash
 # 1. TA-Lib C library (Linux; see docs/installation.md for macOS/Windows)
 cd build_helpers && sudo bash install_ta-lib.sh && cd ..
 
-# 2. Python environment
+# 2. Python env + dependencies (note: pandas-ta==0.3.14b was yanked from PyPI and
+#    is NOT needed by the core bot, so we skip it)
 python3 -m venv .venv
 .venv/bin/pip install --upgrade pip wheel
-# NOTE: pandas-ta==0.3.14b was yanked from PyPI and is not needed by the core bot,
-# so install the pinned deps without it, then install freqtrade itself:
 grep -v "pandas-ta" requirements.txt > /tmp/req_core.txt
 .venv/bin/pip install -r /tmp/req_core.txt -r requirements-hyperopt.txt -r requirements-plot.txt
 .venv/bin/pip install -e . --no-deps
+
+# 3. (Only for the ML strategy) FreqAI dependencies
+.venv/bin/pip install scikit-learn==1.5.2 joblib==1.4.2 catboost==1.2.7 \
+    matplotlib==3.9.2 lightgbm==4.5.0 xgboost==2.0.3 tensorboard==2.18.0 datasieve==0.1.7
 ```
 
-## Workflow
+---
 
-All commands are run from the repo root. `--userdir user_data` points Freqtrade here.
-
-### 1. Download historical data
+## A) Classic strategy — backtest, tune, dry-run
 
 ```bash
-.venv/bin/freqtrade download-data --config user_data/config.json --userdir user_data \
-    --timeframe 1h --timerange 20240101-
-```
+# Backtest on OKX data
+.venv/bin/freqtrade download-data --config user_data/config.json --userdir user_data --timeframe 1h --timerange 20240101-
+.venv/bin/freqtrade backtesting --config user_data/config.json --userdir user_data --strategy SmartTrendMomentum --timerange 20240101-
 
-### 2. Backtest
-
-```bash
-.venv/bin/freqtrade backtesting --config user_data/config.json --userdir user_data \
-    --strategy SmartTrendMomentum --timeframe 1h --timerange 20240101-
-```
-
-### 3. Hyperopt (auto-tune the parameters — the "smart" part)
-
-```bash
+# Auto-tune parameters (the printed values are already baked into the strategy)
 .venv/bin/freqtrade hyperopt --config user_data/config.json --userdir user_data \
     --strategy SmartTrendMomentum --hyperopt-loss SharpeHyperOptLoss \
-    --spaces buy sell roi trailing --epochs 100 --timeframe 1h --timerange 20240101-
+    --spaces buy sell roi trailing --epochs 100 --timerange 20240101-
+
+# Paper-trade LIVE on Kraken (no real money; dry_run: true)
+.venv/bin/freqtrade trade --config user_data/config_kraken.json --userdir user_data --strategy SmartTrendMomentum
 ```
 
-Then paste the printed `buy_params` / `sell_params` / `minimal_roi` / trailing values
-back into the strategy (the current values are already tuned results from one such run).
-
-### 4. Dry-run (paper trade live market data + dashboard)
+## B) Machine-learning strategy (FreqAI)
 
 ```bash
-.venv/bin/freqtrade trade --config user_data/config.json --userdir user_data \
-    --strategy SmartTrendMomentum
+# Needs 1h data + ~30 days of warm-up before your backtest window for training
+.venv/bin/freqtrade download-data --config user_data/config_freqai.json --userdir user_data --timeframe 1h --timerange 20240101-
+
+# Backtest the ML model (it trains + retrains automatically)
+.venv/bin/freqtrade backtesting --config user_data/config_freqai.json --userdir user_data \
+    --strategy FreqaiSmartStrategy --freqaimodel LightGBMRegressor --timerange 20240401-20240601
+
+# Dry-run live (edit config_freqai.json exchange -> kraken + USD pairs first for your account)
+.venv/bin/freqtrade trade --config user_data/config_freqai.json --userdir user_data \
+    --strategy FreqaiSmartStrategy --freqaimodel LightGBMRegressor
 ```
 
-Open the dashboard (FreqUI). First install it once with
-`.venv/bin/freqtrade install-ui`, then browse to `http://127.0.0.1:8080`
-(log in with the `username`/`password` from `config.json`).
+## C) The dashboard
 
-## Going live (only when YOU decide)
+The bot exposes a REST API (enabled in the configs). There are two ways to see it:
 
-This is a deliberate, manual step. To trade real money you would:
+- **Built-in FreqUI** (full featured): `.venv/bin/freqtrade install-ui` once, then browse
+  to `http://127.0.0.1:8080` while the bot runs.
+- **This custom dashboard** (`dashboard/index.html`): serve it and connect.
 
-1. Choose a supported exchange you can legally use (US users: **Kraken** is the most
-   bot-friendly officially-supported option; Binance is geo-restricted in many regions
-   — this VM itself got an HTTP 451 from Binance).
-2. Create API keys on that exchange and put them in `config.json` (`exchange.key` /
-   `exchange.secret`) — better, use environment variables / a secrets manager.
-3. Set `"dry_run": false` and rotate the placeholder `jwt_secret_key`, `ws_token`,
-   and dashboard `password` to strong random values.
-4. Start with tiny stake sizes.
+```bash
+# With the bot running (config has api_server.enabled = true), in another terminal:
+cd user_data/dashboard && python3 -m http.server 8000
+# Open http://127.0.0.1:8000 and log in with the api_server username/password.
+```
 
-## Honest performance note
+If the dashboard can't connect, the usual cause is CORS: make sure the address you
+open it from is listed in the config's `api_server.CORS_origins` (8000 and 8080 are
+already included).
 
-On OKX 1h data (Jan 2024 – Jun 2025), the tuned strategy was **profitable and very
-low-drawdown** (profit factor ~11, only a handful of losing days) but **traded rarely
-and did NOT beat simply holding** (the market rose ~75% over the same window). That's
-typical: this is a conservative, capital-preserving baseline. Improving it is exactly
-what hyperopt, more pairs/timeframes, and the FreqAI machine-learning module are for.
+---
+
+## ✅ What YOU need to do
+
+1. **Run the one-time setup** above (installs the bot + ML deps).
+2. **Create a Kraken account** and generate API keys
+   (Kraken → Settings → API → create key with *Query* + *Trade* permissions; do **not**
+   enable withdrawals). US-based: you're all set on Kraken.
+3. **Edit `user_data/config_kraken.json`:**
+   - Put your keys in `exchange.key` / `exchange.secret` (or use env vars / a secrets
+     manager — don't commit real keys).
+   - Change the three placeholders: `jwt_secret_key`, `ws_token`, and the dashboard
+     `password` to strong random values.
+   - Optionally adjust `pair_whitelist`, `stake_amount`, `max_open_trades`.
+4. **Backtest** (strategy A and/or B) to understand the behavior — see commands above.
+5. **Dry-run on Kraken** (`dry_run: true`, the default) and watch it on the dashboard for
+   a while. This uses real live prices but **zero real money**.
+6. **Only when you're satisfied**, and with money you can afford to lose: set
+   `"dry_run": false` in `config_kraken.json`, start with a **small** `stake_amount`, and
+   run the `trade` command. That single flag is the line between practice and real money —
+   cross it deliberately.
+
+---
+
+## Honest performance notes
+
+- **Classic strategy (tuned):** on OKX 1h data (Jan 2024–Jun 2025) it was profitable and
+  very low-drawdown (profit factor ~11, few losing days) but traded rarely and **did not
+  beat buy-and-hold** (market rose ~75%). A safe, capital-preserving baseline.
+- **ML strategy:** the pipeline is fully working (trains, predicts, retrains, trades). Out
+  of the box with a small feature set it's roughly break-even/slightly negative — normal
+  for un-researched ML. It's a genuine research surface: add features, try other models
+  (`XGBoostRegressor`, `CatboostRegressor`), tune `label_period_candles`, thresholds, and
+  the training window. The hybrid trend guard already made it far more sensible.
+
+There is no "smartest" auto-profitable bot. The edge comes from research + testing, which
+this setup is built to let you do safely.
